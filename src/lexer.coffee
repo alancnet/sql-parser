@@ -1,37 +1,53 @@
+{Observable} = require 'rxjs'
 class Lexer
-  constructor: (sql, opts={}) ->
-    @sql = sql
-    @preserveWhitespace = opts.preserveWhitespace || false
-    @tokens = []
-    @currentLine = 1
-    @currentOffset = 0
-    i = 0
-    while @chunk = sql.slice(i)
-      bytesConsumed =  @keywordToken() or
-                       @starToken() or
-                       @booleanToken() or
-                       @functionToken() or
-                       @windowExtension() or
-                       @sortOrderToken() or
-                       @seperatorToken() or
-                       @operatorToken() or
-                       @mathToken() or
-                       @dotToken() or
-                       @conditionalToken() or
-                       @betweenToken() or
-                       @subSelectOpToken() or
-                       @subSelectUnaryOpToken() or
-                       @numberToken() or
-                       @stringToken() or
-                       @parameterToken() or
-                       @parensToken() or
-                       @whitespaceToken() or
-                       @literalToken()
-      throw new Error("NOTHING CONSUMED: Stopped at - '#{@chunk.slice(0,30)}'") if bytesConsumed < 1
-      i += bytesConsumed
-      @currentOffset += bytesConsumed
-    @token('EOF', '')
-    @postProcess()
+  constructor: (stream, opts={}) ->
+    @observable = Observable.create((observer) =>
+      @observer = observer
+      @sql = ''
+      @preserveWhitespace = opts.preserveWhitespace || false
+      @tokens = []
+      @currentLine = 1
+      @currentOffset = 0
+      stream.subscribe(
+        (data) =>
+          @sql += data
+          i = 0
+          while (@chunk = @sql.slice(i)).length
+            bytesConsumed =  @keywordToken() or
+                             @starToken() or
+                             @booleanToken() or
+                             @functionToken() or
+                             @windowExtension() or
+                             @sortOrderToken() or
+                             @seperatorToken() or
+                             @operatorToken() or
+                             @mathToken() or
+                             @dotToken() or
+                             @semicolonToken() or
+                             @conditionalToken() or
+                             @betweenToken() or
+                             @subSelectOpToken() or
+                             @subSelectUnaryOpToken() or
+                             @numberToken() or
+                             @stringToken() or
+                             @parameterToken() or
+                             @parensToken() or
+                             @whitespaceToken() or
+                             @literalToken()
+            if bytesConsumed < 1
+              break
+            i += bytesConsumed
+            @currentOffset += bytesConsumed
+          @sql = @chunk
+
+        (err) =>
+          @observer.error(err)
+        () =>
+          @token('EOF', '')
+          @observer.complete()
+      )
+      # @postProcess()
+    )
 
   postProcess: ->
     for token, i in @tokens
@@ -41,6 +57,7 @@ class Lexer
           token[0] = 'MATH_MULTI'
 
   token: (name, value) ->
+    @observer.next([name, value, @currentLine, @currentOffset])
     @tokens.push([name, value, @currentLine, @currentOffset])
 
   tokenizeFromStringRegex: (name, regex, part=0, lengthPart=part, output=true) ->
@@ -111,6 +128,7 @@ class Lexer
     @tokenizeFromWord('FIRST')
 
   dotToken: -> @tokenizeFromWord('DOT', '.')
+  semicolonToken:   -> @tokenizeFromWord('SEMICOLON', ';')
   operatorToken:    -> @tokenizeFromList('OPERATOR', SQL_OPERATORS)
   mathToken:        ->
     @tokenizeFromList('MATH', MATH) or
@@ -128,10 +146,31 @@ class Lexer
   literalToken:     -> @tokenizeFromRegex('LITERAL', LITERAL, 1, 0)
   numberToken:      -> @tokenizeFromRegex('NUMBER', NUMBER)
   parameterToken:   -> @tokenizeFromRegex('PARAMETER', PARAMETER, 1, 0)
-  stringToken:      ->
-    @tokenizeFromStringRegex('STRING', STRING, 1, 0) ||
-    @tokenizeFromRegex('DBLSTRING', DBLSTRING, 1, 0)
+  stringToken:      -> @tokenizeString()
+    # @tokenizeFromStringRegex('STRING', STRING, 1, 0) ||
+    # @tokenizeFromRegex('DBLSTRING', DBLSTRING, 1, 0)
 
+  tokenizeString: ->
+    i = 0
+    eof = () => i >= @chunk.length
+    peek = () => @chunk.charAt(i)
+    pop = () => @chunk.charAt(i++)
+    if (peek() == '"' or peek() == "'")
+      ret = []
+      q = pop()
+      while !eof()
+        c = pop()
+        if c == q # Closing quote?
+          if peek() == q # No, escaped quote.
+            ret.push(pop())
+          else # Yes, closing quote.
+            @token('STRING', ret.join(''))
+            return i
+        else if c == '\\' # Escape character
+          ret.push(pop()) # Just emit the character
+        else
+          ret.push(c) # Other character. Just emit.
+    return 0
 
   parensToken: ->
     @tokenizeFromRegex('LEFT_PAREN', /^\(/,) or
@@ -167,13 +206,13 @@ class Lexer
   MATH_MULTI          = ['/', '*']
   STAR                = /^\*/
   SEPARATOR           = /^,/
-  WHITESPACE          = /^[ \n\r]+/
+  WHITESPACE          = /^[ \n\r\t]+/
   LITERAL             = /^`?([a-z_][a-z0-9_]{0,}(\:(number|float|string|date|boolean))?)`?/i
   PARAMETER           = /^\$([a-z0-9_]+(\:(number|float|string|date|boolean))?)/
   NUMBER              = /^[0-9]+(\.[0-9]+)?/
-  STRING              = /^'((?:[^\\']+?|\\.|'')*)'(?!')/
+  STRING              = /^'([^\\']*(?:\\.[^\\']*)*)'/
   DBLSTRING           = /^"([^\\"]*(?:\\.[^\\"]*)*)"/
 
 
 
-exports.tokenize = (sql, opts) -> (new Lexer(sql, opts)).tokens
+exports.tokenize = (stream, opts) -> (new Lexer(stream, opts)).observable

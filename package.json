@@ -1,12 +1,16 @@
 {
-  "name": "sql-parser-mistic",
-  "description": "Lexer and Parser for SQL Syntax",
-  "version": "1.2.1",
+  "name": "sql-parser-rx",
+  "description": "Reactive Lexer and Parser for SQL Syntax",
+  "version": "1.2.1d",
   "author": {
     "name": "Andy Kent",
     "email": "andy@forward.co.uk"
   },
   "contributors": [
+    {
+      "name": "Alan Colon",
+      "email": "npm@alanc.net"
+    },
     {
       "name": "Damien \"Mistic\" Sorel",
       "email": "contact@git.strangeplanet.fr",
@@ -38,5 +42,8 @@
   "scripts": {
     "build": "cake build",
     "test": "cake build && mocha --require should --compilers coffee:coffee-script/register"
+  },
+  "dependencies": {
+    "rxjs": "^5.5.8"
   }
 }
